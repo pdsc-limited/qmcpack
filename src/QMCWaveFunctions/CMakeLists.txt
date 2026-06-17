@@ -43,6 +43,14 @@ set(WFBASE_SRCS
 if(QMC_COMPLEX)
   set(WFBASE_SRCS ${WFBASE_SRCS} SpinorSet.cpp)
 endif(QMC_COMPLEX)
+
+if(ENABLE_DEEPQMC_INFERENCE)
+  set(WFBASE_SRCS
+      ${WFBASE_SRCS}
+      DeepQMC/DeepQMCBridge.cpp
+      DeepQMC/DeepQMCWaveFunctionBuilder.cpp
+      DeepQMC/DeepQMCWaveFunctionComponent.cpp)
+endif()
 ########################
 # build jastrows
 ########################
@@ -143,6 +151,9 @@ else(USE_OBJECT_TARGET)
 endif(USE_OBJECT_TARGET)
 
 target_include_directories(qmcwfs PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+if(ENABLE_DEEPQMC_INFERENCE)
+  target_compile_definitions(qmcwfs PUBLIC ENABLE_DEEPQMC_INFERENCE)
+endif()
 target_link_libraries(qmcwfs PUBLIC spline2 qmcutil qmcparticle
 platform_runtime platform_LA containers)
 target_link_libraries(qmcwfs PRIVATE einspline Math::FFTW3)

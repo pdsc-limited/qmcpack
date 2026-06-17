@@ -110,6 +110,9 @@ set(TRIALWF_SRC
     test_lattice_gaussian.cpp
     test_twf_fastderiv_raii.cpp
     test_TWFGrads.cpp)
+if(ENABLE_DEEPQMC_INFERENCE)
+  set(TRIALWF_SRC ${TRIALWF_SRC} test_deepqmc_wfc.cpp)
+endif()
 
 set(SPOSET_SRC
     test_spo_collection_input_spline.cpp

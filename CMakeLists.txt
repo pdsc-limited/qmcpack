@@ -142,6 +142,7 @@ else()
   message(STATUS "LMY engine enabled for widest range of wavefunction optimization methods.")
 endif()
 option(BUILD_AFQMC "Build with AFQMC" OFF)
+option(ENABLE_DEEPQMC_INFERENCE "Enable experimental DeepQMC wavefunction inference support" OFF)
 # explicit HIP source codes only exist in AFQMC.
 cmake_dependent_option(BUILD_AFQMC_HIP "Build with with GPU support in AFQMC through explicit HIP source code" OFF "BUILD_AFQMC" OFF)
 if(BUILD_AFQMC_HIP)
