@@ -113,9 +113,53 @@ Likely modified files:
 
 ## Validation Status
 
-Implementation started. Validation blocked in this container because a fresh CMake configure fails before target generation due to missing build dependencies:
+Implementation started and the initial scaffold compiles in the updated Spack environment at `/workspace/spack_env/qmcpack`.
 
-- first configure attempt failed because MPI was unavailable; retry used `-DQMC_MPI=OFF`
-- second configure attempt failed because BLAS/LAPACK were unavailable
+Successful configure command used explicit MPI wrapper compilers because the active environment had stale `CC/CXX/FC` values pointing at missing view `clang` symlinks:
 
-No CMake-generated build target is available yet in this workspace, so the new code has not been compiled or tested.
+```bash
+CC=$(which mpicc) CXX=$(which mpicxx) FC=$(which mpifort) \
+  cmake -S . -B build-deepqmc -G Ninja \
+  -DENABLE_DEEPQMC_INFERENCE=ON \
+  -DBUILD_UNIT_TESTS=ON \
+  -DBUILD_AFQMC=OFF \
+  -DBUILD_MICRO_BENCHMARKS=OFF
+```
+
+Build passed:
+
+```bash
+cmake --build build-deepqmc --target test_wavefunction_trialwf -j 8
+```
+
+Full `ctest -R deterministic-unit_test_wavefunction_trialwf` initially failed in `TrialWaveFunction_diamondC_1x1x1` with a SIGSEGV. ASAN/debug exposed the root cause as a LAPACK ABI issue:
+
+```text
+** On entry to DGETRI parameter number 6 had an illegal value
+Xgetri failed with error -6
+```
+
+The Spack env had `openblas+ilp64`, while QMCPACK's generic BLAS/LAPACK path expected LP64 integers. Fixed the env by changing `/workspace/spack_env/qmcpack/spack.yaml` to `openblas~ilp64`, then running:
+
+```bash
+cd /workspace/spack_env/qmcpack
+spack concretize -f
+spack install
+```
+
+After reconfiguring/rebuilding, full trialwf unit test passed:
+
+```bash
+ctest --test-dir build-deepqmc -R deterministic-unit_test_wavefunction_trialwf --output-on-failure
+```
+
+Result: 100% tests passed, 1/1.
+
+Targeted DeepQMC tests also passed:
+
+```bash
+cd build-deepqmc/src/QMCWaveFunctions/tests
+./test_wavefunction_trialwf "DeepQMCWaveFunctionComponent*" --success
+```
+
+Result: all targeted DeepQMC tests passed, 46 assertions in 2 test cases.
