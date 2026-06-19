@@ -5,7 +5,6 @@
 
 #include "QMCWaveFunctions/DeepQMC/DeepQMCWaveFunctionBuilder.h"
 
-#include <sstream>
 #include <stdexcept>
 
 #include "OhmmsData/AttributeSet.h"
@@ -15,9 +14,7 @@
 namespace qmcplusplus
 {
 
-DeepQMCWaveFunctionBuilder::DeepQMCWaveFunctionBuilder(Communicate* comm,
-                                                       ParticleSet& target,
-                                                       const PSetMap& psets)
+DeepQMCWaveFunctionBuilder::DeepQMCWaveFunctionBuilder(Communicate* comm, ParticleSet& target, const PSetMap& psets)
     : WaveFunctionComponentBuilder(comm, target), ptcl_pool_(psets)
 {}
 
@@ -41,14 +38,7 @@ std::unique_ptr<WaveFunctionComponent> DeepQMCWaveFunctionBuilder::buildComponen
   if (ion_it == ptcl_pool_.end())
     throw std::runtime_error("DeepQMC wavefunction source particle set not found: " + source_name);
 
-  std::ostringstream reason;
-  reason << "real Python/JAX bridge construction is not implemented yet";
-  if (!model_path.empty())
-    reason << " for model '" << model_path << "'";
-  if (!python_module_path.empty())
-    reason << " using python_module_path '" << python_module_path << "'";
-
-  auto bridge = makeUnavailableDeepQMCBridge(reason.str());
+  auto bridge = makePythonDeepQMCBridge(model_path, python_module_path);
   return std::make_unique<DeepQMCWaveFunctionComponent>(name, *ion_it->second, std::move(bridge), mol_idx);
 }
 

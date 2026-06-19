@@ -5,6 +5,9 @@
 
 #include "catch.hpp"
 
+#include <filesystem>
+#include <fstream>
+
 #include "Configuration.h"
 #include "Particle/ParticleSet.h"
 #include "QMCWaveFunctions/DeepQMC/DeepQMCBridge.h"
@@ -86,7 +89,7 @@ ParticleSet makeIons(const SimulationCell& simulation_cell)
 TEST_CASE("DeepQMCWaveFunctionComponent batched evaluateLog", "[wavefunction][deepqmc]")
 {
   const SimulationCell simulation_cell;
-  ParticleSet ions = makeIons(simulation_cell);
+  ParticleSet ions  = makeIons(simulation_cell);
   ParticleSet elec0 = makeElectrons(simulation_cell, {{0.0, 0.1, 0.2}, {1.0, 1.1, 1.2}});
   ParticleSet elec1 = makeElectrons(simulation_cell, {{2.0, 2.1, 2.2}, {3.0, 3.1, 3.2}});
 
@@ -129,8 +132,7 @@ TEST_CASE("DeepQMCWaveFunctionComponent batched evaluateLog", "[wavefunction][de
   CHECK(bridge->last_ion_coords[1] == Approx(2.0));
   CHECK(bridge->last_ion_coords[2] == Approx(3.0));
 
-  const std::vector<RealType> expected_electron_coords{0.0, 0.1, 0.2, 1.0, 1.1, 1.2,
-                                                       2.0, 2.1, 2.2, 3.0, 3.1, 3.2};
+  const std::vector<RealType> expected_electron_coords{0.0, 0.1, 0.2, 1.0, 1.1, 1.2, 2.0, 2.1, 2.2, 3.0, 3.1, 3.2};
   REQUIRE(bridge->last_electron_coords.size() == expected_electron_coords.size());
   for (int i = 0; i < expected_electron_coords.size(); ++i)
     CHECK(bridge->last_electron_coords[i] == Approx(expected_electron_coords[i]));
@@ -155,6 +157,42 @@ TEST_CASE("DeepQMCWaveFunctionComponent batched evaluateLog", "[wavefunction][de
   CHECK(G1[1][2] == Approx(112.0));
   CHECK(L1[0] == Approx(1000.0));
   CHECK(L1[1] == Approx(1001.0));
+}
+
+TEST_CASE("PythonDeepQMCBridge calls Python batch bridge", "[wavefunction][deepqmc]")
+{
+  namespace fs              = std::filesystem;
+  const fs::path bridge_dir = fs::temp_directory_path() / "qmcpack_deepqmc_bridge_test";
+  fs::remove_all(bridge_dir);
+  fs::create_directories(bridge_dir);
+
+  std::ofstream bridge_py(bridge_dir / "deepqmc_infer_bridge.py");
+  bridge_py << R"PY(
+class DeepQMCInferBridge:
+    def __init__(self, model_path):
+        self.model_path = model_path
+
+    def compute_log_gl(self, nuclear_coords, electron_coords, mol_idx, batch_size, n_elec):
+        assert self.model_path == 'fake-model'
+        assert nuclear_coords == [1.0, 2.0, 3.0]
+        assert electron_coords == [0.0, 0.1, 0.2, 1.0, 1.1, 1.2]
+        assert batch_size == 1
+        assert n_elec == 2
+        return [20.0 + mol_idx], [0.0, 1.0, 2.0, 10.0, 11.0, 12.0], [100.0, 101.0]
+)PY";
+  bridge_py.close();
+
+  auto bridge       = makePythonDeepQMCBridge("fake-model", bridge_dir.string());
+  const auto result = bridge->evaluateLogBatch({1.0, 2.0, 3.0}, {0.0, 0.1, 0.2, 1.0, 1.1, 1.2}, 5, 1, 2);
+
+  REQUIRE(result.log_values.size() == 1);
+  REQUIRE(result.grad_log_values.size() == 6);
+  REQUIRE(result.lap_log_values.size() == 2);
+  CHECK(result.log_values[0] == Approx(25.0));
+  CHECK(result.grad_log_values[5] == Approx(12.0));
+  CHECK(result.lap_log_values[1] == Approx(101.0));
+
+  fs::remove_all(bridge_dir);
 }
 
 TEST_CASE("DeepQMCWaveFunctionComponent single walker delegates to batched evaluateLog", "[wavefunction][deepqmc]")

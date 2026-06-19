@@ -153,9 +153,13 @@ endif(USE_OBJECT_TARGET)
 target_include_directories(qmcwfs PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 if(ENABLE_DEEPQMC_INFERENCE)
   target_compile_definitions(qmcwfs PUBLIC ENABLE_DEEPQMC_INFERENCE)
+  target_compile_definitions(qmcwfs PRIVATE DEEPQMC_INFER_BRIDGE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/DeepQMC")
 endif()
 target_link_libraries(qmcwfs PUBLIC spline2 qmcutil qmcparticle
 platform_runtime platform_LA containers)
+if(ENABLE_DEEPQMC_INFERENCE)
+  target_link_libraries(qmcwfs PRIVATE Python3::Python)
+endif()
 target_link_libraries(qmcwfs PRIVATE einspline Math::FFTW3)
 
 add_library(qmcwfs_omptarget OBJECT ${JASTROW_OMPTARGET_SRCS} ${FERMION_OMPTARGET_SRCS})

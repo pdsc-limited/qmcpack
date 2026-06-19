@@ -77,8 +77,8 @@ Likely modified files:
 7. Register XML builder behind `ENABLE_DEEPQMC_INFERENCE`. **Initial version done; real Python bridge construction still placeholder.**
 8. Add unit tests that do not require DeepQMC by using a mock bridge. **Initial direct component test added.**
 9. Add optional real DeepQMC integration test later.
-10. Replace placeholder unavailable bridge in `DeepQMCWaveFunctionBuilder` with the real Python/JAX bridge.
-11. Verify compile/tests in a configured QMCPACK build with required dependencies.
+10. Replace placeholder unavailable bridge in `DeepQMCWaveFunctionBuilder` with the real Python/JAX bridge. **Initial Python embedding version done; real DeepQMC package/model not yet exercised.**
+11. Verify compile/tests in a configured QMCPACK build with required dependencies. **Mock and Python-stub tests pass.**
 
 ## Progress Log
 
@@ -103,10 +103,17 @@ Likely modified files:
 - Implemented `evaluateLog(...)` as a one-walker wrapper around `mw_evaluateLog(...)`.
 - Prototype particle-by-particle APIs (`ratio`, `ratioGrad`, `evalGrad`) currently throw clear unsupported errors.
 
+### 2026-06-19
+
+- Replaced `makeUnavailableDeepQMCBridge` usage in `DeepQMCWaveFunctionBuilder` with `makePythonDeepQMCBridge(model, python_module_path)`.
+- Added Python embedding in `DeepQMCBridge.cpp` using the C API and `Python3::Python`; CMake now requires Python interpreter/development components when `ENABLE_DEEPQMC_INFERENCE=ON`.
+- Added `src/QMCWaveFunctions/DeepQMC/deepqmc_infer_bridge.py`, adapted from the miniapp, with a `compute_log_gl` API returning batched `log(psi)`, flattened `grad log(psi)`, and per-electron `laplacian log(psi)`.
+- Added a Python-stub unit test for the C++ Python bridge, independent of the real DeepQMC package.
+- Kept batch-first component behavior unchanged; single-walker `evaluateLog` still delegates through `mw_evaluateLog`.
+
 ## Open Questions
 
-- Exact CMake location and naming convention for `ENABLE_DEEPQMC_INFERENCE`.
-- Whether Python bridge file should be installed/copied beside the executable, embedded, or loaded from XML path.
+- Whether Python bridge file should be installed/copied beside the executable, embedded, or loaded from XML path. Current prototype adds the source-tree `DeepQMC` directory to `sys.path` and allows XML `python_module_path` to override it.
 - Whether first prototype should support only fixed ion coordinates from QMCPACK input or allow model-provided molecule metadata.
 - How to manage Python/JAX initialization and GPU platform selection in MPI runs.
 - Whether `ratio`/`ratioGrad` should initially full-recompute through batch size 1 or throw unsupported for non-compatible drivers.
@@ -155,11 +162,29 @@ ctest --test-dir build-deepqmc -R deterministic-unit_test_wavefunction_trialwf -
 
 Result: 100% tests passed, 1/1.
 
-Targeted DeepQMC tests also passed:
+Targeted DeepQMC tests also passed before the Python bridge work:
 
 ```bash
 cd build-deepqmc/src/QMCWaveFunctions/tests
 ./test_wavefunction_trialwf "DeepQMCWaveFunctionComponent*" --success
 ```
 
-Result: all targeted DeepQMC tests passed, 46 assertions in 2 test cases.
+Result: all targeted DeepQMC component tests passed, 46 assertions in 2 test cases.
+
+After adding the C++ Python bridge and a Python-stub test, the target rebuild and focused tests passed:
+
+```bash
+cmake --build build-deepqmc --target test_wavefunction_trialwf -j 8
+cd build-deepqmc/src/QMCWaveFunctions/tests
+./test_wavefunction_trialwf "[deepqmc]" --success
+```
+
+Result: all focused DeepQMC tests passed, 52 assertions in 3 test cases.
+
+Full trialwf unit ctest still passes:
+
+```bash
+ctest --test-dir build-deepqmc -R deterministic-unit_test_wavefunction_trialwf --output-on-failure
+```
+
+Result: 100% tests passed, 1/1.

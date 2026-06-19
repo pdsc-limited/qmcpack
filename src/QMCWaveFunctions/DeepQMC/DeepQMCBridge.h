@@ -41,7 +41,10 @@ public:
                                        int n_elec) const = 0;
 };
 
-/** Prototype placeholder for XML construction before the real Python bridge lands. */
+/** Construct the real Python/JAX-backed DeepQMC inference bridge. */
+std::shared_ptr<const DeepQMCBridge> makePythonDeepQMCBridge(std::string model_path, std::string python_module_path);
+
+/** Placeholder useful for tests and clear disabled-path errors. */
 std::shared_ptr<const DeepQMCBridge> makeUnavailableDeepQMCBridge(std::string reason);
 
 } // namespace qmcplusplus
