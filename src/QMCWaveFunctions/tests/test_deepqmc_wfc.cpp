@@ -5,6 +5,8 @@
 
 #include "catch.hpp"
 
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -193,6 +195,29 @@ class DeepQMCInferBridge:
   CHECK(result.lap_log_values[1] == Approx(101.0));
 
   fs::remove_all(bridge_dir);
+}
+
+TEST_CASE("PythonDeepQMCBridge can load a real DeepQMC He checkpoint", "[wavefunction][deepqmc]")
+{
+  const char* checkpoint  = std::getenv("DEEPQMC_HE_CHECKPOINT");
+  const char* python_path = std::getenv("DEEPQMC_PYTHON_SITE_PACKAGES");
+  if (checkpoint == nullptr || python_path == nullptr)
+  {
+    SUCCEED("Set DEEPQMC_HE_CHECKPOINT and DEEPQMC_PYTHON_SITE_PACKAGES to run the optional real DeepQMC bridge test");
+    return;
+  }
+
+  auto bridge       = makePythonDeepQMCBridge(checkpoint, python_path);
+  const auto result = bridge->evaluateLogBatch({0.0, 0.0, 0.0}, {0.1, 0.0, 0.0, -0.1, 0.0, 0.0}, 0, 1, 2);
+
+  REQUIRE(result.log_values.size() == 1);
+  REQUIRE(result.grad_log_values.size() == 6);
+  REQUIRE(result.lap_log_values.size() == 2);
+  CHECK(std::abs(result.log_values[0]) < 1.0e100);
+  for (const auto value : result.grad_log_values)
+    CHECK(std::abs(value) < 1.0e100);
+  for (const auto value : result.lap_log_values)
+    CHECK(std::abs(value) < 1.0e100);
 }
 
 TEST_CASE("DeepQMCWaveFunctionComponent single walker delegates to batched evaluateLog", "[wavefunction][deepqmc]")

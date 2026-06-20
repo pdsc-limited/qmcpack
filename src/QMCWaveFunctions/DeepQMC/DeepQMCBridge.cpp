@@ -166,6 +166,10 @@ public:
       prependSysPath(DEEPQMC_INFER_BRIDGE_SOURCE_DIR);
       prependSysPath(python_module_path_);
 
+      PyObject* modules = PyImport_GetModuleDict();
+      if (modules && PyDict_DelItemString(modules, "deepqmc_infer_bridge") != 0)
+        PyErr_Clear();
+
       python_module_ = PyObjectHandle(PyImport_ImportModule("deepqmc_infer_bridge"));
       if (!python_module_.get())
         throwPythonError("importing deepqmc_infer_bridge failed");

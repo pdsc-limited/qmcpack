@@ -17,14 +17,56 @@ import jax
 import jax.numpy as jnp
 import jax_dataclasses as jdc
 import os
+import pickle
+import sys
+import types
 from pathlib import Path
 from hydra import compose, initialize_config_dir
 from hydra.utils import instantiate
+# PySCF imports h5py at module import time.  In embedded QMCPACK, binary h5py
+# wheels can collide with the HDF5 library already linked into QMCPACK.  The He
+# inference prototype does not need PySCF checkpoint I/O, so avoid importing the
+# real h5py module just to satisfy PySCF's import-time dependency.
+_h5py_stub = types.ModuleType('h5py')
+_h5py_stub.version = types.SimpleNamespace(version='3.0.0')
+_h5py_stub.File = type('File', (), {})
+sys.modules.setdefault('h5py', _h5py_stub)
+
 from deepqmc.app import instantiate_ansatz
 from deepqmc.molecule import Molecule
 from deepqmc.hamil import MolecularHamiltonian
-from deepqmc.log import CheckpointStore
+from deepqmc.parallel import replicate_on_devices, scatter_electrons_to_devices
 from deepqmc.types import PhysicalConfiguration
+
+
+def _load_checkpoint_without_h5py(path):
+    """Load a DeepQMC CheckpointStore checkpoint without importing deepqmc.log.
+
+    deepqmc.log imports h5py for training logs.  Embedded QMCPACK already links
+    HDF5, which can conflict with binary h5py wheels, but inference only needs
+    the pickled TrainState params.  This mirrors the relevant part of
+    CheckpointStore.load / deserialize_train_state while avoiding h5py import.
+    """
+    with Path(path).open('rb') as f:
+        step, train_state = pickle.load(f)
+
+    if train_state.sampler['elec'].get('r', None) is not None:
+        if train_state.sampler['elec']['r'].ndim == 6:
+            return step, train_state
+    if train_state.sampler['elec'].get('tau', None) is not None:
+        if train_state.sampler['elec']['tau'].ndim == 3:
+            train_state.sampler['elec']['tau'] = train_state.sampler['elec']['tau'].mean(axis=-1)
+    train_state.sampler['elec']['tau'] = jnp.repeat(
+        train_state.sampler['elec']['tau'][..., None], jax.device_count(), axis=-1
+    )
+    params, opt = replicate_on_devices((train_state.params, train_state.opt))
+    sampler = train_state.sampler
+    sampler['elec'] = scatter_electrons_to_devices(sampler['elec'])
+    sampler['elec']['tau'] = jnp.squeeze(sampler['elec']['tau'], axis=-1)
+    sampler['nuc'], sampler['update_nuc_counter'] = replicate_on_devices(
+        (sampler['nuc'], sampler['update_nuc_counter'])
+    )
+    return step, type(train_state)(sampler, params, opt)
 
 
 class DeepQMCInferBridge:
@@ -41,7 +83,7 @@ class DeepQMCInferBridge:
         _ansatz = instantiate(cfg, _recursive_=True, _convert_='all')
         self.ansatz = instantiate_ansatz(self.H, _ansatz)
 
-        step, train_state = CheckpointStore.load(Path(model_path))
+        step, train_state = _load_checkpoint_without_h5py(Path(model_path))
         params = train_state.params
 
         def drop_first_two_dims(x):

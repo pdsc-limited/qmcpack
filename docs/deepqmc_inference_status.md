@@ -110,10 +110,15 @@ Likely modified files:
 - Added `src/QMCWaveFunctions/DeepQMC/deepqmc_infer_bridge.py`, adapted from the miniapp, with a `compute_log_gl` API returning batched `log(psi)`, flattened `grad log(psi)`, and per-electron `laplacian log(psi)`.
 - Added a Python-stub unit test for the C++ Python bridge, independent of the real DeepQMC package.
 - Kept batch-first component behavior unchanged; single-walker `evaluateLog` still delegates through `mw_evaluateLog`.
+- Added `utils/deepqmc/train_he_checkpoint.py` to recreate a prototype He DeepQMC checkpoint locally.
+- Created Python venvs in `../deepqmc` for training/checkpoint testing. The working Python 3.13 environment for the QMCPACK-linked Python is `../deepqmc/.venv-qmcpack-py313` with `jax==0.6.2`, `jaxlib==0.6.2`, and editable local DeepQMC.
+- Trained a CPU-only 100-step He prototype checkpoint at `deepqmc_runs/he_proto_100/training/chkpt-100.pt` using `JAX_PLATFORMS=cpu ../deepqmc/.venv-qmcpack-py313/bin/python utils/deepqmc/train_he_checkpoint.py --workdir /workspace/qmcpack/deepqmc_runs/he_proto_100 --steps 100 --electron-batch-size 128 --no-spin-monitor`.
+- Added an optional real-checkpoint unit test enabled by `DEEPQMC_HE_CHECKPOINT` and `DEEPQMC_PYTHON_SITE_PACKAGES`. It validated the C++ embedded Python bridge against the 100-step He checkpoint.
+- Updated the Python inference bridge to avoid importing `deepqmc.log`/real `h5py` during inference; PySCF imports h5py at import time, which conflicts with QMCPACK-linked HDF5 and binary h5py wheels, so the He prototype supplies a minimal h5py stub before importing DeepQMC Hamiltonian code.
 
 ## Open Questions
 
-- Whether Python bridge file should be installed/copied beside the executable, embedded, or loaded from XML path. Current prototype adds the source-tree `DeepQMC` directory to `sys.path` and allows XML `python_module_path` to override it.
+- Whether Python bridge file should be installed/copied beside the executable, embedded, or loaded from XML path. Current prototype adds the source-tree `DeepQMC` directory to `sys.path` and allows XML `python_module_path` to override it. For editable DeepQMC installs, external `PYTHONPATH` may still need to include `/workspace/deepqmc/src` because adding a venv site-packages directory after Python initialization does not process editable-install `.pth` files.
 - Whether first prototype should support only fixed ion coordinates from QMCPACK input or allow model-provided molecule metadata.
 - How to manage Python/JAX initialization and GPU platform selection in MPI runs.
 - Whether `ratio`/`ratioGrad` should initially full-recompute through batch size 1 or throw unsupported for non-compatible drivers.
@@ -188,3 +193,34 @@ ctest --test-dir build-deepqmc -R deterministic-unit_test_wavefunction_trialwf -
 ```
 
 Result: 100% tests passed, 1/1.
+
+A CPU-only 100-step He checkpoint was trained locally:
+
+```bash
+cd /workspace/qmcpack
+JAX_PLATFORMS=cpu ../deepqmc/.venv-qmcpack-py313/bin/python \
+  utils/deepqmc/train_he_checkpoint.py \
+  --workdir /workspace/qmcpack/deepqmc_runs/he_proto_100 \
+  --steps 100 \
+  --electron-batch-size 128 \
+  --no-spin-monitor
+```
+
+Result checkpoint:
+
+```text
+/workspace/qmcpack/deepqmc_runs/he_proto_100/training/chkpt-100.pt
+```
+
+The optional real DeepQMC bridge unit test passed with that checkpoint:
+
+```bash
+cd build-deepqmc/src/QMCWaveFunctions/tests
+JAX_PLATFORMS=cpu \
+PYTHONPATH=/workspace/deepqmc/src:/workspace/deepqmc/.venv-qmcpack-py313/lib/python3.13/site-packages \
+DEEPQMC_HE_CHECKPOINT=/workspace/qmcpack/deepqmc_runs/he_proto_100/training/chkpt-100.pt \
+DEEPQMC_PYTHON_SITE_PACKAGES=/workspace/deepqmc/.venv-qmcpack-py313/lib/python3.13/site-packages \
+./test_wavefunction_trialwf "PythonDeepQMCBridge can load a real DeepQMC He checkpoint" --success
+```
+
+Result: all checks passed, 12 assertions in 1 test case.
