@@ -11,9 +11,13 @@
 #include <fstream>
 
 #include "Configuration.h"
+#include "Message/Communicate.h"
+#include "OhmmsData/Libxml2Doc.h"
 #include "Particle/ParticleSet.h"
 #include "QMCWaveFunctions/DeepQMC/DeepQMCBridge.h"
 #include "QMCWaveFunctions/DeepQMC/DeepQMCWaveFunctionComponent.h"
+#include "QMCWaveFunctions/WaveFunctionFactory.h"
+#include "Utilities/RuntimeOptions.h"
 
 namespace qmcplusplus
 {
@@ -193,6 +197,87 @@ class DeepQMCInferBridge:
   CHECK(result.log_values[0] == Approx(25.0));
   CHECK(result.grad_log_values[5] == Approx(12.0));
   CHECK(result.lap_log_values[1] == Approx(101.0));
+
+  fs::remove_all(bridge_dir);
+}
+
+TEST_CASE("WaveFunctionFactory builds DeepQMC component from XML", "[wavefunction][deepqmc]")
+{
+  namespace fs              = std::filesystem;
+  const fs::path bridge_dir = fs::temp_directory_path() / "qmcpack_deepqmc_factory_test";
+  fs::remove_all(bridge_dir);
+  fs::create_directories(bridge_dir);
+
+  std::ofstream bridge_py(bridge_dir / "deepqmc_infer_bridge.py");
+  bridge_py << R"PY(
+class DeepQMCInferBridge:
+    def __init__(self, model_path):
+        self.model_path = model_path
+
+    def compute_log_gl(self, nuclear_coords, electron_coords, mol_idx, batch_size, n_elec):
+        assert self.model_path == 'factory-model'
+        assert nuclear_coords == [0.0, 0.0, 0.0]
+        assert electron_coords == [0.0, 0.1, 0.2, 1.0, 1.1, 1.2,
+                                   2.0, 2.1, 2.2, 3.0, 3.1, 3.2]
+        assert mol_idx == 9
+        assert batch_size == 2
+        assert n_elec == 2
+        return [30.0, 31.0], [0.0, 1.0, 2.0, 10.0, 11.0, 12.0,
+                              100.0, 101.0, 102.0, 110.0, 111.0, 112.0], [200.0, 201.0, 300.0, 301.0]
+)PY";
+  bridge_py.close();
+
+  const SimulationCell simulation_cell;
+  WaveFunctionFactory::PSetMap particle_set_map;
+
+  auto ions = std::make_unique<ParticleSet>(simulation_cell);
+  ions->setName("ion0");
+  ions->create({1});
+  ions->R[0] = {0.0, 0.0, 0.0};
+  ions->update();
+  particle_set_map.emplace("ion0", std::move(ions));
+
+  auto elec0 = std::make_unique<ParticleSet>(simulation_cell);
+  elec0->setName("e");
+  elec0->create({2});
+  elec0->R[0] = {0.0, 0.1, 0.2};
+  elec0->R[1] = {1.0, 1.1, 1.2};
+  elec0->update();
+  particle_set_map.emplace("e", std::move(elec0));
+
+  ParticleSet elec1 = makeElectrons(simulation_cell, {{2.0, 2.1, 2.2}, {3.0, 3.1, 3.2}});
+
+  std::string wavefunction_xml = "<wavefunction name=\"psi0\" target=\"e\">"
+                                 "<deepqmc name=\"DNN\" source=\"ion0\" model=\"factory-model\" mol_idx=\"9\" "
+                                 "python_module_path=\"" +
+      bridge_dir.string() +
+      "\"/>"
+      "</wavefunction>";
+  Libxml2Document doc;
+  REQUIRE(doc.parseFromString(wavefunction_xml.c_str()));
+
+  WaveFunctionFactory wff(*particle_set_map["e"], particle_set_map, OHMMS::Controller);
+  RuntimeOptions runtime_options;
+  auto twf0 = wff.buildTWF(doc.getRoot(), runtime_options);
+  REQUIRE(twf0 != nullptr);
+  REQUIRE(twf0->size() == 1);
+  auto twf1 = twf0->makeClone(elec1);
+
+  RefVectorWithLeader<TrialWaveFunction> wf_list(*twf0);
+  wf_list.push_back(*twf0);
+  wf_list.push_back(*twf1);
+  RefVectorWithLeader<ParticleSet> p_list(*particle_set_map["e"]);
+  p_list.push_back(*particle_set_map["e"]);
+  p_list.push_back(elec1);
+
+  TrialWaveFunction::mw_evaluateLog(wf_list, p_list);
+
+  CHECK(twf0->getLogPsi() == Approx(30.0));
+  CHECK(twf1->getLogPsi() == Approx(31.0));
+  CHECK(twf0->G[1][2] == Approx(12.0));
+  CHECK(twf1->G[0][0] == Approx(100.0));
+  CHECK(twf0->L[1] == Approx(201.0));
+  CHECK(twf1->L[1] == Approx(301.0));
 
   fs::remove_all(bridge_dir);
 }

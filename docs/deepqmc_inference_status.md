@@ -115,6 +115,7 @@ Likely modified files:
 - Trained a CPU-only 100-step He prototype checkpoint at `deepqmc_runs/he_proto_100/training/chkpt-100.pt` using `JAX_PLATFORMS=cpu ../deepqmc/.venv-qmcpack-py313/bin/python utils/deepqmc/train_he_checkpoint.py --workdir /workspace/qmcpack/deepqmc_runs/he_proto_100 --steps 100 --electron-batch-size 128 --no-spin-monitor`.
 - Added an optional real-checkpoint unit test enabled by `DEEPQMC_HE_CHECKPOINT` and `DEEPQMC_PYTHON_SITE_PACKAGES`. It validated the C++ embedded Python bridge against the 100-step He checkpoint.
 - Updated the Python inference bridge to avoid importing `deepqmc.log`/real `h5py` during inference; PySCF imports h5py at import time, which conflicts with QMCPACK-linked HDF5 and binary h5py wheels, so the He prototype supplies a minimal h5py stub before importing DeepQMC Hamiltonian code.
+- Added a `WaveFunctionFactory` XML construction test using a Python stub bridge. It builds `<deepqmc>` from XML, clones the resulting `TrialWaveFunction`, and verifies `TrialWaveFunction::mw_evaluateLog` batches two walkers through the DeepQMC component.
 
 ## Open Questions
 
@@ -224,3 +225,20 @@ DEEPQMC_PYTHON_SITE_PACKAGES=/workspace/deepqmc/.venv-qmcpack-py313/lib/python3.
 ```
 
 Result: all checks passed, 12 assertions in 1 test case.
+
+After adding the XML/factory-level test, focused DeepQMC tests pass:
+
+```bash
+cd build-deepqmc/src/QMCWaveFunctions/tests
+./test_wavefunction_trialwf "[deepqmc]" --success
+```
+
+Result: all focused DeepQMC tests passed, 62 assertions in 5 test cases.
+
+Full trialwf unit ctest still passes:
+
+```bash
+ctest --test-dir build-deepqmc -R deterministic-unit_test_wavefunction_trialwf --output-on-failure
+```
+
+Result: 100% tests passed, 1/1.
