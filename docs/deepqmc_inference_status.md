@@ -116,6 +116,12 @@ Likely modified files:
 - Added an optional real-checkpoint unit test enabled by `DEEPQMC_HE_CHECKPOINT` and `DEEPQMC_PYTHON_SITE_PACKAGES`. It validated the C++ embedded Python bridge against the 100-step He checkpoint.
 - Updated the Python inference bridge to avoid importing `deepqmc.log`/real `h5py` during inference; PySCF imports h5py at import time, which conflicts with QMCPACK-linked HDF5 and binary h5py wheels, so the He prototype supplies a minimal h5py stub before importing DeepQMC Hamiltonian code.
 - Added a `WaveFunctionFactory` XML construction test using a Python stub bridge. It builds `<deepqmc>` from XML, clones the resulting `TrialWaveFunction`, and verifies `TrialWaveFunction::mw_evaluateLog` batches two walkers through the DeepQMC component.
+- Added CMake checkpoint discovery/generation controls for the optional real He checkpoint test:
+  - `DEEPQMC_HE_CHECKPOINT` uses an explicit local checkpoint.
+  - `${QMC_DATA}/DeepQMC/He/chkpt-100.pt` is used if present.
+  - `DEEPQMC_HE_CHECKPOINT_URL` optionally downloads the checkpoint into the build tree; failed download does not fail configuration.
+  - `DEEPQMC_TRAIN_TEST_CHECKPOINTS` defaults to `OFF`; when set `ON`, CMake adds a `deepqmc_he_checkpoint` target that trains the checkpoint only if no local/downloaded checkpoint is available.
+  - `DEEPQMC_PYTHON_SITE_PACKAGES`, `DEEPQMC_PYTHONPATH`, `DEEPQMC_TRAIN_PYTHON_EXECUTABLE`, `DEEPQMC_TRAIN_STEPS`, and `DEEPQMC_TRAIN_ELECTRON_BATCH_SIZE` configure the optional real-checkpoint test/training path.
 
 ## Open Questions
 
@@ -242,3 +248,23 @@ ctest --test-dir build-deepqmc -R deterministic-unit_test_wavefunction_trialwf -
 ```
 
 Result: 100% tests passed, 1/1.
+
+The generated-checkpoint CMake path was also validated in a separate build:
+
+```bash
+CC=$(which mpicc) CXX=$(which mpicxx) FC=$(which mpifort) \
+  cmake -S . -B build-deepqmc-train -G Ninja \
+  -DENABLE_DEEPQMC_INFERENCE=ON \
+  -DBUILD_UNIT_TESTS=ON \
+  -DBUILD_AFQMC=OFF \
+  -DBUILD_MICRO_BENCHMARKS=OFF \
+  -DDEEPQMC_TRAIN_TEST_CHECKPOINTS=ON \
+  -DDEEPQMC_TRAIN_PYTHON_EXECUTABLE=/workspace/deepqmc/.venv-qmcpack-py313/bin/python \
+  -DDEEPQMC_PYTHON_SITE_PACKAGES=/workspace/deepqmc/.venv-qmcpack-py313/lib/python3.13/site-packages \
+  -DDEEPQMC_PYTHONPATH=/workspace/deepqmc/src:/workspace/deepqmc/.venv-qmcpack-py313/lib/python3.13/site-packages
+cmake --build build-deepqmc-train --target deepqmc_he_checkpoint -j 2
+cmake --build build-deepqmc-train --target test_wavefunction_trialwf -j 8
+ctest --test-dir build-deepqmc-train -R deterministic-unit_test_wavefunction_trialwf --output-on-failure
+```
+
+Result: generated checkpoint was produced under `build-deepqmc-train/src/QMCWaveFunctions/tests/DeepQMC/He/generated/training/chkpt-100.pt`, and the trialwf unit ctest passed 100%, 1/1.
