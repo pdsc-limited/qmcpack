@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<simulation>
+  <project id="deepqmc_he_vmc_batch" series="0"/>
+  <random seed="11"/>
+
+  <particleset name="ion0" size="1">
+    <group name="He">
+      <parameter name="charge">2</parameter>
+    </group>
+    <attrib name="position" datatype="posArray">
+      0.0 0.0 0.0
+    </attrib>
+  </particleset>
+
+  <particleset name="e" random="yes" randomsrc="ion0">
+    <group name="u" size="1">
+      <parameter name="charge">-1</parameter>
+    </group>
+    <group name="d" size="1">
+      <parameter name="charge">-1</parameter>
+    </group>
+  </particleset>
+
+  <wavefunction name="psi0" target="e">
+    <deepqmc name="DNN" source="ion0" model="@DEEPQMC_RESOLVED_HE_CHECKPOINT@" mol_idx="0"/>
+  </wavefunction>
+
+  <hamiltonian name="h0" type="generic" target="e">
+    <pairpot name="ElecElec" type="coulomb" source="e" target="e"/>
+    <pairpot name="Coulomb" type="coulomb" source="ion0" target="e"/>
+  </hamiltonian>
+
+  <qmc method="vmc_batch" move="pbyp">
+    <estimators>
+      <estimator name="LocalEnergy" hdf5="no"/>
+    </estimators>
+    <parameter name="total_walkers">2</parameter>
+    <parameter name="blocks">1</parameter>
+    <parameter name="steps">1</parameter>
+    <parameter name="subSteps">1</parameter>
+    <parameter name="warmupSteps">0</parameter>
+    <parameter name="timestep">0.1</parameter>
+  </qmc>
+</simulation>

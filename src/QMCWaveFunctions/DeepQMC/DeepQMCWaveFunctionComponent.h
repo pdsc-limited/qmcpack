@@ -35,8 +35,8 @@ public:
                       const RefVector<ParticleSet::ParticleGradient>& G_list,
                       const RefVector<ParticleSet::ParticleLaplacian>& L_list) const override;
 
-  void acceptMove(ParticleSet& P, int iat, bool safe_to_delay = false) override {}
-  void restore(int iat) override {}
+  void acceptMove(ParticleSet& P, int iat, bool safe_to_delay = false) override;
+  void restore(int iat) override;
   PsiValue ratio(ParticleSet& P, int iat) override;
   GradType evalGrad(ParticleSet& P, int iat) override;
   PsiValue ratioGrad(ParticleSet& P, int iat, GradType& grad_iat) override;
@@ -60,9 +60,13 @@ private:
   static std::vector<RealType> flattenIonCoords(const ParticleSet& ions);
   static void appendElectronCoords(const ParticleSet& electrons, std::vector<RealType>& electron_coords);
 
+  DeepQMCBridge::BatchResult evaluateOne(const ParticleSet& electrons, bool use_active_position) const;
+
   const ParticleSet& ions_;
   std::shared_ptr<const DeepQMCBridge> bridge_;
   int mol_idx_;
+  bool has_proposed_log_value_ = false;
+  LogValue proposed_log_value_ = LogValue(0);
 };
 
 } // namespace qmcplusplus

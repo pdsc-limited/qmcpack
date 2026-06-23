@@ -5,7 +5,8 @@
 
 #include "QMCWaveFunctions/DeepQMC/DeepQMCWaveFunctionComponent.h"
 
-#include <sstream>
+#include <cmath>
+#include <complex>
 #include <stdexcept>
 #include <utility>
 
@@ -25,14 +26,6 @@ void validateResultShape(const DeepQMCBridge::BatchResult& result, int batch_siz
     throw std::runtime_error("DeepQMC bridge returned wrong number of laplacian values");
 }
 
-[[noreturn]] void throwPbypUnsupported(const char* method_name)
-{
-  std::ostringstream msg;
-  msg << "DeepQMCWaveFunctionComponent::" << method_name
-      << " is not supported in the prototype. DeepQMC inference is batch/multi-walker first; "
-         "use walker-level/Crowd evaluation paths.";
-  throw std::runtime_error(msg.str());
-}
 } // namespace
 
 DeepQMCWaveFunctionComponent::DeepQMCWaveFunctionComponent(std::string name,
@@ -62,6 +55,25 @@ void DeepQMCWaveFunctionComponent::appendElectronCoords(const ParticleSet& elect
   for (int iat = 0; iat < electrons.getTotalNum(); ++iat)
     for (int d = 0; d < OHMMS_DIM; ++d)
       electron_coords.push_back(electrons.R[iat][d]);
+}
+
+DeepQMCBridge::BatchResult DeepQMCWaveFunctionComponent::evaluateOne(const ParticleSet& electrons,
+                                                                      bool use_active_position) const
+{
+  std::vector<RealType> electron_coords;
+  const int n_elec = electrons.getTotalNum();
+  electron_coords.reserve(static_cast<std::size_t>(n_elec) * OHMMS_DIM);
+  for (int iat = 0; iat < n_elec; ++iat)
+  {
+    const auto& pos = use_active_position ? electrons.activeR(iat) : electrons.R[iat];
+    for (int d = 0; d < OHMMS_DIM; ++d)
+      electron_coords.push_back(pos[d]);
+  }
+
+  DeepQMCBridge::BatchResult result =
+      bridge_->evaluateLogBatch(flattenIonCoords(ions_), electron_coords, mol_idx_, 1, n_elec);
+  validateResultShape(result, 1, n_elec);
+  return result;
 }
 
 DeepQMCWaveFunctionComponent::LogValue DeepQMCWaveFunctionComponent::evaluateLog(
@@ -136,21 +148,45 @@ void DeepQMCWaveFunctionComponent::mw_evaluateLog(
   }
 }
 
+void DeepQMCWaveFunctionComponent::acceptMove(ParticleSet& P, int iat, bool safe_to_delay)
+{
+  if (has_proposed_log_value_)
+    log_value_ = proposed_log_value_;
+  has_proposed_log_value_ = false;
+}
+
+void DeepQMCWaveFunctionComponent::restore(int iat)
+{
+  has_proposed_log_value_ = false;
+}
+
 DeepQMCWaveFunctionComponent::PsiValue DeepQMCWaveFunctionComponent::ratio(ParticleSet& P, int iat)
 {
-  throwPbypUnsupported("ratio");
+  const auto result       = evaluateOne(P, true);
+  proposed_log_value_     = LogValue(result.log_values[0]);
+  has_proposed_log_value_ = true;
+  return std::exp(std::real(proposed_log_value_ - log_value_));
 }
 
 DeepQMCWaveFunctionComponent::GradType DeepQMCWaveFunctionComponent::evalGrad(ParticleSet& P, int iat)
 {
-  throwPbypUnsupported("evalGrad");
+  const auto result = evaluateOne(P, false);
+  GradType grad;
+  for (int d = 0; d < OHMMS_DIM; ++d)
+    grad[d] = result.grad_log_values[static_cast<std::size_t>(iat) * OHMMS_DIM + d];
+  return grad;
 }
 
 DeepQMCWaveFunctionComponent::PsiValue DeepQMCWaveFunctionComponent::ratioGrad(ParticleSet& P,
                                                                                 int iat,
                                                                                 GradType& grad_iat)
 {
-  throwPbypUnsupported("ratioGrad");
+  const auto result       = evaluateOne(P, true);
+  proposed_log_value_     = LogValue(result.log_values[0]);
+  has_proposed_log_value_ = true;
+  for (int d = 0; d < OHMMS_DIM; ++d)
+    grad_iat[d] = result.grad_log_values[static_cast<std::size_t>(iat) * OHMMS_DIM + d];
+  return std::exp(std::real(proposed_log_value_ - log_value_));
 }
 
 DeepQMCWaveFunctionComponent::LogValue DeepQMCWaveFunctionComponent::updateBuffer(ParticleSet& P,

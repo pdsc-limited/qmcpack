@@ -112,57 +112,6 @@ set(TRIALWF_SRC
     test_TWFGrads.cpp)
 if(ENABLE_DEEPQMC_INFERENCE)
   set(TRIALWF_SRC ${TRIALWF_SRC} test_deepqmc_wfc.cpp)
-
-  set(DEEPQMC_RESOLVED_HE_CHECKPOINT "")
-  if(DEEPQMC_HE_CHECKPOINT AND EXISTS "${DEEPQMC_HE_CHECKPOINT}")
-    set(DEEPQMC_RESOLVED_HE_CHECKPOINT "${DEEPQMC_HE_CHECKPOINT}")
-    message(STATUS "Using DeepQMC He checkpoint from DEEPQMC_HE_CHECKPOINT=${DEEPQMC_RESOLVED_HE_CHECKPOINT}")
-  elseif(QMC_DATA AND EXISTS "${QMC_DATA}/DeepQMC/He/chkpt-100.pt")
-    set(DEEPQMC_RESOLVED_HE_CHECKPOINT "${QMC_DATA}/DeepQMC/He/chkpt-100.pt")
-    message(STATUS "Using DeepQMC He checkpoint from QMC_DATA: ${DEEPQMC_RESOLVED_HE_CHECKPOINT}")
-  elseif(DEEPQMC_HE_CHECKPOINT_URL)
-    set(DEEPQMC_DOWNLOADED_HE_CHECKPOINT "${CMAKE_CURRENT_BINARY_DIR}/DeepQMC/He/chkpt-100.pt")
-    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/DeepQMC/He")
-    message(STATUS "Attempting to download DeepQMC He checkpoint from ${DEEPQMC_HE_CHECKPOINT_URL}")
-    file(
-      DOWNLOAD "${DEEPQMC_HE_CHECKPOINT_URL}" "${DEEPQMC_DOWNLOADED_HE_CHECKPOINT}"
-      STATUS DEEPQMC_DOWNLOAD_STATUS
-      SHOW_PROGRESS)
-    list(GET DEEPQMC_DOWNLOAD_STATUS 0 DEEPQMC_DOWNLOAD_CODE)
-    list(GET DEEPQMC_DOWNLOAD_STATUS 1 DEEPQMC_DOWNLOAD_MESSAGE)
-    if(DEEPQMC_DOWNLOAD_CODE EQUAL 0)
-      set(DEEPQMC_RESOLVED_HE_CHECKPOINT "${DEEPQMC_DOWNLOADED_HE_CHECKPOINT}")
-      message(STATUS "Downloaded DeepQMC He checkpoint to ${DEEPQMC_RESOLVED_HE_CHECKPOINT}")
-    else()
-      file(REMOVE "${DEEPQMC_DOWNLOADED_HE_CHECKPOINT}")
-      message(STATUS "DeepQMC He checkpoint download failed: ${DEEPQMC_DOWNLOAD_MESSAGE}")
-    endif()
-  endif()
-
-  if(NOT DEEPQMC_RESOLVED_HE_CHECKPOINT AND DEEPQMC_TRAIN_TEST_CHECKPOINTS)
-    set(DEEPQMC_GENERATED_HE_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}/DeepQMC/He/generated")
-    set(DEEPQMC_GENERATED_HE_CHECKPOINT "${DEEPQMC_GENERATED_HE_WORKDIR}/training/chkpt-${DEEPQMC_TRAIN_STEPS}.pt")
-    add_custom_command(
-      OUTPUT "${DEEPQMC_GENERATED_HE_CHECKPOINT}"
-      COMMAND ${CMAKE_COMMAND} -E make_directory "${DEEPQMC_GENERATED_HE_WORKDIR}"
-      COMMAND
-        ${CMAKE_COMMAND} -E env "JAX_PLATFORMS=cpu" "PYTHONPATH=${DEEPQMC_PYTHONPATH}"
-        "${DEEPQMC_TRAIN_PYTHON_EXECUTABLE}" "${qmcpack_SOURCE_DIR}/utils/deepqmc/train_he_checkpoint.py" --workdir
-        "${DEEPQMC_GENERATED_HE_WORKDIR}" --steps "${DEEPQMC_TRAIN_STEPS}" --electron-batch-size
-        "${DEEPQMC_TRAIN_ELECTRON_BATCH_SIZE}" --no-spin-monitor
-      WORKING_DIRECTORY "${qmcpack_SOURCE_DIR}"
-      COMMENT "Training DeepQMC He checkpoint for optional inference tests"
-      VERBATIM)
-    add_custom_target(deepqmc_he_checkpoint DEPENDS "${DEEPQMC_GENERATED_HE_CHECKPOINT}")
-    set(DEEPQMC_RESOLVED_HE_CHECKPOINT "${DEEPQMC_GENERATED_HE_CHECKPOINT}")
-    message(STATUS "DeepQMC He checkpoint will be generated at ${DEEPQMC_RESOLVED_HE_CHECKPOINT}")
-  endif()
-
-  if(DEEPQMC_RESOLVED_HE_CHECKPOINT AND NOT DEEPQMC_PYTHON_SITE_PACKAGES)
-    message(STATUS "DeepQMC He checkpoint found/generated, but DEEPQMC_PYTHON_SITE_PACKAGES is not set; optional real checkpoint test will skip.")
-  elseif(NOT DEEPQMC_RESOLVED_HE_CHECKPOINT)
-    message(STATUS "DeepQMC He checkpoint not found. Optional real checkpoint test will skip. Set DEEPQMC_HE_CHECKPOINT, QMC_DATA/DeepQMC/He/chkpt-100.pt, DEEPQMC_HE_CHECKPOINT_URL, or DEEPQMC_TRAIN_TEST_CHECKPOINTS=ON.")
-  endif()
 endif()
 
 set(SPOSET_SRC

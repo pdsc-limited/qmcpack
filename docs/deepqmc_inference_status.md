@@ -268,3 +268,27 @@ ctest --test-dir build-deepqmc-train -R deterministic-unit_test_wavefunction_tri
 ```
 
 Result: generated checkpoint was produced under `build-deepqmc-train/src/QMCWaveFunctions/tests/DeepQMC/He/generated/training/chkpt-100.pt`, and the trialwf unit ctest passed 100%, 1/1.
+
+A real QMCPACK application-level VMC batch smoke test is now available when `ENABLE_DEEPQMC_INFERENCE=ON` and a He checkpoint plus Python environment are configured:
+
+```text
+deterministic-He_ae-deepqmc_vmc_batch-r1-t1
+```
+
+The test configures `tests/molecules/He_ae/deepqmc_he_vmc_batch.xml.in` with the resolved checkpoint path and runs the `qmcpack` executable with a `<deepqmc>` wavefunction in a one-block, two-walker `vmc_batch` calculation. This exercises XML parsing, `WaveFunctionFactory`, the embedded Python DeepQMC bridge, batched initial log evaluation, local energy evaluation, and the driver path rather than only unit-test construction.
+
+To enable this short end-to-end test:
+
+```bash
+cmake -S . -B build-deepqmc -G Ninja \
+  -DENABLE_DEEPQMC_INFERENCE=ON \
+  -DDEEPQMC_HE_CHECKPOINT=/path/to/chkpt-100.pt \
+  -DDEEPQMC_PYTHON_SITE_PACKAGES=/path/to/python/site-packages \
+  -DDEEPQMC_PYTHONPATH=/path/to/deepqmc/src:/path/to/python/site-packages
+cmake --build build-deepqmc --target qmcpack test_wavefunction_trialwf
+ctest --test-dir build-deepqmc -R 'deterministic-He_ae-deepqmc_vmc_batch|deterministic-unit_test_wavefunction_trialwf' --output-on-failure
+```
+
+Result in the local explicit-checkpoint build: 100% tests passed, 2/2. The generated-checkpoint path was also revalidated after moving checkpoint provisioning to top-level CMake: `deepqmc_he_checkpoint` generated `build-deepqmc-train2/DeepQMC/He/generated/training/chkpt-100.pt`, and both `deterministic-unit_test_wavefunction_trialwf` and `deterministic-He_ae-deepqmc_vmc_batch-r1-t1` passed.
+
+For this smoke test only, particle-by-particle compatibility functions (`ratio`, `ratioGrad`, `evalGrad`) perform full one-walker recomputation through the DeepQMC bridge. The primary intended path remains batch/multi-walker `mw_evaluateLog`; this fallback is not a performance implementation.
