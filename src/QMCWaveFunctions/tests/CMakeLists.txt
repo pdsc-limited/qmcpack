@@ -230,6 +230,26 @@ foreach(CATEGORY common trialwf sposet jastrow determinant)
 
 endforeach()
 
+if(ENABLE_DEEPQMC_INFERENCE AND BUILD_MICRO_BENCHMARKS)
+  set(UTEST_EXE benchmark_deepqmc_wfc)
+  add_executable(${UTEST_EXE} benchmark_deepqmc_wfc.cpp)
+  target_link_libraries(
+    ${UTEST_EXE}
+    catch_main
+    qmcwfs
+    platform_LA
+    platform_runtime
+    utilities_for_test
+    container_testing)
+  if(USE_OBJECT_TARGET)
+    target_link_libraries(${UTEST_EXE} qmcutil qmcparticle qmcparticle_omptarget qmcwfs_omptarget platform_omptarget_LA)
+  endif()
+  target_include_directories(${UTEST_EXE} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
+  if(TARGET deepqmc_he_checkpoint)
+    add_dependencies(${UTEST_EXE} deepqmc_he_checkpoint)
+  endif()
+endif()
+
 if((ENABLE_CUDA OR ENABLE_SYCL) AND BUILD_MICRO_BENCHMARKS)
   set(UTEST_EXE benchmark_diracmatrixcompute)
   set(UTEST_NAME deterministic-unit_${UTEST_EXE})

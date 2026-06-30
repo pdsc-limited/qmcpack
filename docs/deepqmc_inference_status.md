@@ -292,3 +292,22 @@ ctest --test-dir build-deepqmc -R 'deterministic-He_ae-deepqmc_vmc_batch|determi
 Result in the local explicit-checkpoint build: 100% tests passed, 2/2. The generated-checkpoint path was also revalidated after moving checkpoint provisioning to top-level CMake: `deepqmc_he_checkpoint` generated `build-deepqmc-train2/DeepQMC/He/generated/training/chkpt-100.pt`, and both `deterministic-unit_test_wavefunction_trialwf` and `deterministic-He_ae-deepqmc_vmc_batch-r1-t1` passed.
 
 For this smoke test only, particle-by-particle compatibility functions (`ratio`, `ratioGrad`, `evalGrad`) perform full one-walker recomputation through the DeepQMC bridge. The primary intended path remains batch/multi-walker `mw_evaluateLog`; this fallback is not a performance implementation.
+
+A direct Catch2 microbenchmark now isolates the intended batch-first TrialWaveFunction path without using the full QMCPACK XML/application loop:
+
+```text
+src/QMCWaveFunctions/tests/benchmark_deepqmc_wfc.cpp
+```
+
+The benchmark constructs He `ParticleSet`/`TrialWaveFunction` dependency objects directly, attaches a `DeepQMCWaveFunctionComponent` using the real Python bridge, and measures `TrialWaveFunction::mw_evaluateLog` for batch sizes 1 through 512. It is built when `ENABLE_DEEPQMC_INFERENCE=ON` and `BUILD_MICRO_BENCHMARKS=ON`:
+
+```bash
+cmake --build build-deepqmc --target benchmark_deepqmc_wfc
+JAX_PLATFORMS=cpu \
+PYTHONPATH=/workspace/deepqmc/src:/workspace/deepqmc/.venv-qmcpack-py313/lib/python3.13/site-packages \
+DEEPQMC_HE_CHECKPOINT=/workspace/qmcpack/deepqmc_runs/he_proto_100/training/chkpt-100.pt \
+build-deepqmc/src/QMCWaveFunctions/tests/benchmark_deepqmc_wfc '[.benchmark]' \
+  --benchmark-samples 3 --benchmark-resamples 10 --benchmark-warmup-time 0.01
+```
+
+Local CPU smoke result: all benchmark sections ran and passed for batch sizes 1, 2, 4, 8, 16, 32, 64, 128, 256, and 512.
