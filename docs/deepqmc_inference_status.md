@@ -12,7 +12,7 @@ Prototype use of pretrained DeepQMC wavefunctions from QMCPACK via a new batch-f
 - The implementation must be batch/multi-walker first.
 - `WaveFunctionComponent::mw_evaluateLog(...)` is the primary execution path.
 - Single-walker APIs should be compatibility wrappers around the multi-walker implementation, not separate implementations.
-- Particle-by-particle legacy APIs are not a performance target for the prototype; they should either full-recompute through the batch path or fail clearly until explicitly supported.
+- Particle-by-particle legacy APIs should dispatch through `mw_*` paths when used by batched drivers; single-walker APIs should remain compatibility wrappers around shared batched helpers.
 - The DeepQMC bridge should return QMCPACK-native quantities directly:
   - `log(psi)` per walker
   - `grad log(psi)` per electron per walker
@@ -122,6 +122,33 @@ Likely modified files:
   - `DEEPQMC_HE_CHECKPOINT_URL` optionally downloads the checkpoint into the build tree; failed download does not fail configuration.
   - `DEEPQMC_TRAIN_TEST_CHECKPOINTS` defaults to `OFF`; when set `ON`, CMake adds a `deepqmc_he_checkpoint` target that trains the checkpoint only if no local/downloaded checkpoint is available.
   - `DEEPQMC_PYTHON_SITE_PACKAGES`, `DEEPQMC_PYTHONPATH`, `DEEPQMC_TRAIN_PYTHON_EXECUTABLE`, `DEEPQMC_TRAIN_STEPS`, and `DEEPQMC_TRAIN_ELECTRON_BATCH_SIZE` configure the optional real-checkpoint test/training path.
+
+### 2026-07-10
+
+- Implemented true batched DeepQMC particle-by-particle methods used by `vmc_batch move="pbyp"`:
+  - `mw_evalGrad`
+  - `mw_ratioGrad`
+  - `mw_calcRatio`
+  - `mw_accept_rejectMove`
+  - `mw_evaluateGL`
+  - explicit no-op `mw_prepareGroup` and `mw_completeUpdates`
+- Added unit coverage for direct component-level PbyP `mw_*` calls and `TrialWaveFunction` dispatch through the same methods.
+- Added `utils/deepqmc/benchmark_vmc_batch_crowdsize.py` to capture the application-level He `vmc_batch` walkers-per-crowd benchmark. It generates inputs with `crowds=1`, varies `total_walkers`, runs requested JAX platforms, and writes `summary.csv` plus `summary.md`.
+
+Example application benchmark command:
+
+```bash
+PYTHONPATH=/workspace/nn_wf/.venv-qmcpack-py312/lib/python3.12/site-packages \
+LD_LIBRARY_PATH=/home/epd/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib:/workspace/spack_env/qmcpack/.spack-env/view/lib:${LD_LIBRARY_PATH:-} \
+python3 utils/deepqmc/benchmark_vmc_batch_crowdsize.py \
+  --qmcpack build-deepqmc-gpu/bin/qmcpack \
+  --checkpoint deepqmc_runs/he_proto_100/training/chkpt-100.pt \
+  --output deepqmc_runs/walkers_per_crowd_sweep_after_mw \
+  --platforms cpu cuda \
+  --cuda-visible-devices 0
+```
+
+Post-fix application-level benchmark reached about 5.8x GPU speedup at 2048 walkers/crowd for the He checkpoint test case.
 
 ## Open Questions
 
