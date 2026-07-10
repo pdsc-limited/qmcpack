@@ -35,6 +35,34 @@ public:
                       const RefVector<ParticleSet::ParticleGradient>& G_list,
                       const RefVector<ParticleSet::ParticleLaplacian>& L_list) const override;
 
+  void mw_prepareGroup(const RefVectorWithLeader<WaveFunctionComponent>& wfc_list,
+                       const RefVectorWithLeader<ParticleSet>& p_list,
+                       int ig) const override;
+  void mw_evalGrad(const RefVectorWithLeader<WaveFunctionComponent>& wfc_list,
+                   const RefVectorWithLeader<ParticleSet>& p_list,
+                   int iat,
+                   std::vector<GradType>& grad_now) const override;
+  void mw_calcRatio(const RefVectorWithLeader<WaveFunctionComponent>& wfc_list,
+                    const RefVectorWithLeader<ParticleSet>& p_list,
+                    int iat,
+                    std::vector<PsiValue>& ratios) const override;
+  void mw_ratioGrad(const RefVectorWithLeader<WaveFunctionComponent>& wfc_list,
+                    const RefVectorWithLeader<ParticleSet>& p_list,
+                    int iat,
+                    std::vector<PsiValue>& ratios,
+                    std::vector<GradType>& grad_new) const override;
+  void mw_accept_rejectMove(const RefVectorWithLeader<WaveFunctionComponent>& wfc_list,
+                            const RefVectorWithLeader<ParticleSet>& p_list,
+                            int iat,
+                            const std::vector<bool>& isAccepted,
+                            bool safe_to_delay) const override;
+  void mw_completeUpdates(const RefVectorWithLeader<WaveFunctionComponent>& wfc_list) const override;
+  void mw_evaluateGL(const RefVectorWithLeader<WaveFunctionComponent>& wfc_list,
+                     const RefVectorWithLeader<ParticleSet>& p_list,
+                     const RefVector<ParticleSet::ParticleGradient>& G_list,
+                     const RefVector<ParticleSet::ParticleLaplacian>& L_list,
+                     bool fromscratch) const override;
+
   void acceptMove(ParticleSet& P, int iat, bool safe_to_delay = false) override;
   void restore(int iat) override;
   PsiValue ratio(ParticleSet& P, int iat) override;
@@ -58,9 +86,14 @@ public:
 
 private:
   static std::vector<RealType> flattenIonCoords(const ParticleSet& ions);
-  static void appendElectronCoords(const ParticleSet& electrons, std::vector<RealType>& electron_coords);
+  static void appendElectronCoords(const ParticleSet& electrons,
+                                   std::vector<RealType>& electron_coords,
+                                   int active_iat = -1);
 
-  DeepQMCBridge::BatchResult evaluateOne(const ParticleSet& electrons, bool use_active_position) const;
+  static DeepQMCBridge::BatchResult evaluateBatch(const RefVectorWithLeader<WaveFunctionComponent>& wfc_list,
+                                                  const RefVectorWithLeader<ParticleSet>& p_list,
+                                                  int active_iat = -1);
+  DeepQMCBridge::BatchResult evaluateOne(const ParticleSet& electrons, int active_iat = -1) const;
 
   const ParticleSet& ions_;
   std::shared_ptr<const DeepQMCBridge> bridge_;

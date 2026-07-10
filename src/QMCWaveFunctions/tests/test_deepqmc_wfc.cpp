@@ -16,6 +16,8 @@
 #include "Particle/ParticleSet.h"
 #include "QMCWaveFunctions/DeepQMC/DeepQMCBridge.h"
 #include "QMCWaveFunctions/DeepQMC/DeepQMCWaveFunctionComponent.h"
+#include "QMCWaveFunctions/TrialWaveFunction.h"
+#include "QMCWaveFunctions/TWFGrads.hpp"
 #include "QMCWaveFunctions/WaveFunctionFactory.h"
 #include "Utilities/RuntimeOptions.h"
 
@@ -48,7 +50,7 @@ public:
 
     for (int iw = 0; iw < batch_size; ++iw)
     {
-      result.log_values[iw] = 10.0 + iw;
+      result.log_values[iw] = logValue(electron_coords, iw, n_elec);
       for (int iat = 0; iat < n_elec; ++iat)
       {
         const std::size_t particle_offset = static_cast<std::size_t>(iw) * n_elec + iat;
@@ -60,12 +62,30 @@ public:
     return result;
   }
 
+  virtual RealType logValue(const std::vector<RealType>& electron_coords, int iw, int n_elec) const
+  {
+    return 10.0 + iw;
+  }
+
   mutable int call_count = 0;
   mutable std::vector<RealType> last_ion_coords;
   mutable std::vector<RealType> last_electron_coords;
   mutable int last_mol_idx    = -1;
   mutable int last_batch_size = -1;
   mutable int last_n_elec     = -1;
+};
+
+class CoordinateLogDeepQMCBridge : public RecordingDeepQMCBridge
+{
+public:
+  RealType logValue(const std::vector<RealType>& electron_coords, int iw, int n_elec) const override
+  {
+    RealType log_value      = 0.0;
+    const std::size_t begin = static_cast<std::size_t>(iw) * n_elec * OHMMS_DIM;
+    for (int i = 0; i < n_elec * OHMMS_DIM; ++i)
+      log_value += electron_coords[begin + i];
+    return log_value;
+  }
 };
 
 ParticleSet makeElectrons(const SimulationCell& simulation_cell,
@@ -162,6 +182,165 @@ TEST_CASE("DeepQMCWaveFunctionComponent batched evaluateLog", "[wavefunction][de
   CHECK(G1[1][1] == Approx(111.0));
   CHECK(G1[1][2] == Approx(112.0));
   CHECK(L1[0] == Approx(1000.0));
+  CHECK(L1[1] == Approx(1001.0));
+}
+
+TEST_CASE("DeepQMCWaveFunctionComponent batched PbyP methods", "[wavefunction][deepqmc]")
+{
+  const SimulationCell simulation_cell;
+  ParticleSet ions  = makeIons(simulation_cell);
+  ParticleSet elec0 = makeElectrons(simulation_cell, {{0.0, 0.1, 0.2}, {1.0, 1.1, 1.2}});
+  ParticleSet elec1 = makeElectrons(simulation_cell, {{2.0, 2.1, 2.2}, {3.0, 3.1, 3.2}});
+
+  auto bridge = std::make_shared<CoordinateLogDeepQMCBridge>();
+  DeepQMCWaveFunctionComponent comp0("deep", ions, bridge, 7);
+  DeepQMCWaveFunctionComponent comp1("deep", ions, bridge, 7);
+
+  ParticleSet::ParticleGradient G0(elec0.getTotalNum()), G1(elec1.getTotalNum());
+  ParticleSet::ParticleLaplacian L0(elec0.getTotalNum()), L1(elec1.getTotalNum());
+  G0 = 0.0;
+  G1 = 0.0;
+  L0 = 0.0;
+  L1 = 0.0;
+  comp0.evaluateLog(elec0, G0, L0);
+  comp1.evaluateLog(elec1, G1, L1);
+  const auto old_log0 = std::real(comp0.get_log_value());
+  const auto old_log1 = std::real(comp1.get_log_value());
+
+  RefVectorWithLeader<WaveFunctionComponent> wfc_list(comp0);
+  wfc_list.push_back(comp0);
+  wfc_list.push_back(comp1);
+  RefVectorWithLeader<ParticleSet> p_list(elec0);
+  p_list.push_back(elec0);
+  p_list.push_back(elec1);
+
+  std::vector<WaveFunctionComponent::GradType> grads(2);
+  comp0.mw_evalGrad(wfc_list, p_list, 1, grads);
+  CHECK(bridge->last_batch_size == 2);
+  CHECK(bridge->last_electron_coords[0] == Approx(0.0));
+  CHECK(bridge->last_electron_coords[6] == Approx(2.0));
+  CHECK(grads[0][0] == Approx(10.0));
+  CHECK(grads[0][2] == Approx(12.0));
+  CHECK(grads[1][0] == Approx(110.0));
+  CHECK(grads[1][2] == Approx(112.0));
+
+  elec0.makeMove(1, ParticleSet::SingleParticlePos{0.5, 0.0, 0.0});
+  elec1.makeMove(1, ParticleSet::SingleParticlePos{0.0, 0.25, 0.0});
+
+  std::vector<WaveFunctionComponent::PsiValue> ratios;
+  std::vector<WaveFunctionComponent::GradType> grad_new(2);
+  comp0.mw_ratioGrad(wfc_list, p_list, 1, ratios, grad_new);
+
+  const RealType new_log0 = old_log0 + 0.5;
+  const RealType new_log1 = old_log1 + 0.25;
+  CHECK(bridge->last_batch_size == 2);
+  const std::vector<RealType> expected_active_coords{0.0, 0.1, 0.2, 1.5, 1.1, 1.2, 2.0, 2.1, 2.2, 3.0, 3.35, 3.2};
+  REQUIRE(bridge->last_electron_coords.size() == expected_active_coords.size());
+  for (int i = 0; i < expected_active_coords.size(); ++i)
+    CHECK(bridge->last_electron_coords[i] == Approx(expected_active_coords[i]));
+  CHECK(ratios[0] == Approx(std::exp(new_log0 - old_log0)));
+  CHECK(ratios[1] == Approx(std::exp(new_log1 - old_log1)));
+  CHECK(grad_new[0][1] == Approx(11.0));
+  CHECK(grad_new[1][1] == Approx(111.0));
+
+  comp0.mw_accept_rejectMove(wfc_list, p_list, 1, {true, false}, true);
+  CHECK(std::real(comp0.get_log_value()) == Approx(new_log0));
+  CHECK(std::real(comp1.get_log_value()) == Approx(old_log1));
+
+  comp0.mw_calcRatio(wfc_list, p_list, 1, ratios);
+  CHECK(ratios[0] == Approx(1.0));
+  CHECK(ratios[1] == Approx(std::exp(new_log1 - old_log1)));
+}
+
+TEST_CASE("TrialWaveFunction dispatches DeepQMC batched PbyP methods", "[wavefunction][deepqmc]")
+{
+  const SimulationCell simulation_cell;
+  RuntimeOptions runtime_options;
+  ParticleSet ions  = makeIons(simulation_cell);
+  ParticleSet elec0 = makeElectrons(simulation_cell, {{0.0, 0.1, 0.2}, {1.0, 1.1, 1.2}});
+  ParticleSet elec1 = makeElectrons(simulation_cell, {{2.0, 2.1, 2.2}, {3.0, 3.1, 3.2}});
+
+  auto bridge = std::make_shared<CoordinateLogDeepQMCBridge>();
+  TrialWaveFunction twf0(runtime_options, "deepqmc0");
+  twf0.addComponent(std::make_unique<DeepQMCWaveFunctionComponent>("DNN", ions, bridge, 7));
+  TrialWaveFunction twf1(runtime_options, "deepqmc1");
+  twf1.addComponent(std::make_unique<DeepQMCWaveFunctionComponent>("DNN", ions, bridge, 7));
+
+  RefVectorWithLeader<TrialWaveFunction> wf_list(twf0);
+  wf_list.push_back(twf0);
+  wf_list.push_back(twf1);
+  RefVectorWithLeader<ParticleSet> p_list(elec0);
+  p_list.push_back(elec0);
+  p_list.push_back(elec1);
+
+  TrialWaveFunction::mw_evaluateLog(wf_list, p_list);
+  const auto old_log0 = twf0.getLogPsi();
+  const auto old_log1 = twf1.getLogPsi();
+
+  TWFGrads<CoordsType::POS> grads_now(2);
+  TrialWaveFunction::mw_evalGrad(wf_list, p_list, 1, grads_now);
+  CHECK(bridge->last_batch_size == 2);
+  CHECK(grads_now.grads_positions[0][2] == Approx(12.0));
+  CHECK(grads_now.grads_positions[1][2] == Approx(112.0));
+
+  elec0.makeMove(1, ParticleSet::SingleParticlePos{0.5, 0.0, 0.0});
+  elec1.makeMove(1, ParticleSet::SingleParticlePos{0.0, 0.25, 0.0});
+
+  std::vector<TrialWaveFunction::PsiValue> ratios;
+  TWFGrads<CoordsType::POS> grads_new(2);
+  TrialWaveFunction::mw_calcRatioGrad(wf_list, p_list, 1, ratios, grads_new);
+
+  const RealType new_log0 = old_log0 + 0.5;
+  const RealType new_log1 = old_log1 + 0.25;
+  CHECK(bridge->last_batch_size == 2);
+  CHECK(ratios[0] == Approx(std::exp(new_log0 - old_log0)));
+  CHECK(ratios[1] == Approx(std::exp(new_log1 - old_log1)));
+  CHECK(grads_new.grads_positions[0][1] == Approx(11.0));
+  CHECK(grads_new.grads_positions[1][1] == Approx(111.0));
+
+  TrialWaveFunction::mw_accept_rejectMove(wf_list, p_list, 1, {true, false}, true);
+  CHECK(twf0.getLogPsi() == Approx(new_log0));
+  CHECK(twf1.getLogPsi() == Approx(old_log1));
+}
+
+TEST_CASE("DeepQMCWaveFunctionComponent batched evaluateGL delegates to one batch", "[wavefunction][deepqmc]")
+{
+  const SimulationCell simulation_cell;
+  ParticleSet ions  = makeIons(simulation_cell);
+  ParticleSet elec0 = makeElectrons(simulation_cell, {{0.0, 0.1, 0.2}, {1.0, 1.1, 1.2}});
+  ParticleSet elec1 = makeElectrons(simulation_cell, {{2.0, 2.1, 2.2}, {3.0, 3.1, 3.2}});
+
+  auto bridge = std::make_shared<RecordingDeepQMCBridge>();
+  DeepQMCWaveFunctionComponent comp0("deep", ions, bridge, 7);
+  DeepQMCWaveFunctionComponent comp1("deep", ions, bridge, 7);
+
+  ParticleSet::ParticleGradient G0(elec0.getTotalNum()), G1(elec1.getTotalNum());
+  ParticleSet::ParticleLaplacian L0(elec0.getTotalNum()), L1(elec1.getTotalNum());
+  G0 = 0.0;
+  G1 = 0.0;
+  L0 = 0.0;
+  L1 = 0.0;
+
+  RefVectorWithLeader<WaveFunctionComponent> wfc_list(comp0);
+  wfc_list.push_back(comp0);
+  wfc_list.push_back(comp1);
+  RefVectorWithLeader<ParticleSet> p_list(elec0);
+  p_list.push_back(elec0);
+  p_list.push_back(elec1);
+  RefVector<ParticleSet::ParticleGradient> G_list;
+  G_list.push_back(G0);
+  G_list.push_back(G1);
+  RefVector<ParticleSet::ParticleLaplacian> L_list;
+  L_list.push_back(L0);
+  L_list.push_back(L1);
+
+  comp0.mw_evaluateGL(wfc_list, p_list, G_list, L_list, true);
+
+  CHECK(bridge->call_count == 1);
+  CHECK(bridge->last_batch_size == 2);
+  CHECK(std::real(comp0.get_log_value()) == Approx(10.0));
+  CHECK(std::real(comp1.get_log_value()) == Approx(11.0));
+  CHECK(G1[1][2] == Approx(112.0));
   CHECK(L1[1] == Approx(1001.0));
 }
 

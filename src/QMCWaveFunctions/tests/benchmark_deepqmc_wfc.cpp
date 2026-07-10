@@ -48,8 +48,8 @@ std::unique_ptr<ParticleSet> makeElectrons(const SimulationCell& simulation_cell
   electrons->create({1, 1});
 
   const DeepQMCBridge::RealType shift = 0.01 * static_cast<DeepQMCBridge::RealType>(walker_index % 17);
-  electrons->R[0]                 = {0.25 + shift, -0.10 + 0.5 * shift, 0.05 - 0.25 * shift};
-  electrons->R[1]     = {-0.20 + 0.25 * shift, 0.15 - shift, -0.05 + 0.5 * shift};
+  electrons->R[0]                     = {0.25 + shift, -0.10 + 0.5 * shift, 0.05 - 0.25 * shift};
+  electrons->R[1]                     = {-0.20 + 0.25 * shift, 0.15 - shift, -0.05 + 0.5 * shift};
   electrons->update();
   return electrons;
 }
@@ -118,7 +118,7 @@ TEST_CASE("DeepQMC TrialWaveFunction mw_evaluateLog batching benchmark", "[wavef
   ParticleSet ions = makeIons(simulation_cell);
   RuntimeOptions runtime_options;
 
-  const std::vector<int> batch_sizes{1, 2, 4, 8, 16, 32, 64, 128, 256, 512};
+  const std::vector<int> batch_sizes{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
   for (int batch_size : batch_sizes)
   {
     DYNAMIC_SECTION("batch size " << batch_size)
