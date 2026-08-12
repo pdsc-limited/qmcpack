@@ -39,6 +39,57 @@ from deepqmc.parallel import replicate_on_devices, scatter_electrons_to_devices
 from deepqmc.types import PhysicalConfiguration
 
 
+def _find_hydra_config(model_path):
+    """Find a resolved DeepQMC Hydra config associated with a checkpoint.
+
+    DeepQMC checkpoints store parameters/optimizer/sampler state, but the Haiku
+    module tree is defined by the training Hydra config.  Prefer an explicit
+    environment override, then common DeepQMC workdir layouts:
+
+      workdir/chkpt-*.pt
+      workdir/training/chkpt-*.pt
+      workdir/evaluation/chkpt-*.pt
+    """
+    env_path = os.environ.get('DEEPQMC_HYDRA_CONFIG')
+    if env_path:
+        path = Path(env_path).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f'DEEPQMC_HYDRA_CONFIG does not exist: {path}')
+        return path
+
+    checkpoint = Path(model_path).expanduser()
+    search_dirs = [checkpoint.parent, *checkpoint.parents]
+    for directory in search_dirs:
+        candidate = directory / '.hydra' / 'config.yaml'
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _instantiate_problem_from_hydra_config(config_path):
+    """Instantiate MolecularHamiltonian and ansatz from a saved Hydra config."""
+    from omegaconf import OmegaConf
+
+    cfg = OmegaConf.load(config_path)
+    hamiltonian = instantiate(cfg.hamil, _recursive_=True, _convert_='all')
+    ansatz_cfg = instantiate(cfg.ansatz, _recursive_=True, _convert_='all')
+    return hamiltonian, instantiate_ansatz(hamiltonian, ansatz_cfg)
+
+
+def _instantiate_default_he_problem():
+    """Fallback prototype default used by older local checkpoints."""
+    mol = Molecule(coords=[[0.0, 0.0, 0.0]], charges=[2], charge=0, spin=0, unit='bohr')
+    hamiltonian = MolecularHamiltonian(mol=mol)
+
+    deepqmc_dir = os.path.dirname(deepqmc.__file__)
+    config_dir = os.path.join(deepqmc_dir, 'conf/ansatz')
+    with initialize_config_dir(version_base=None, config_dir=config_dir):
+        cfg = compose(config_name='default')
+
+    ansatz_cfg = instantiate(cfg, _recursive_=True, _convert_='all')
+    return hamiltonian, instantiate_ansatz(hamiltonian, ansatz_cfg)
+
+
 def _load_checkpoint_without_h5py(path):
     """Load a DeepQMC CheckpointStore checkpoint without importing deepqmc.log.
 
@@ -71,17 +122,11 @@ def _load_checkpoint_without_h5py(path):
 
 class DeepQMCInferBridge:
     def __init__(self, model_path):
-        # Prototype default mirrors the miniapp: a neutral He atom in bohr.
-        self.mol = Molecule(coords=[[0.0, 0.0, 0.0]], charges=[2], charge=0, spin=0, unit='bohr')
-        self.H = MolecularHamiltonian(mol=self.mol)
-
-        deepqmc_dir = os.path.dirname(deepqmc.__file__)
-        config_dir = os.path.join(deepqmc_dir, 'conf/ansatz')
-        with initialize_config_dir(version_base=None, config_dir=config_dir):
-            cfg = compose(config_name='default')
-
-        _ansatz = instantiate(cfg, _recursive_=True, _convert_='all')
-        self.ansatz = instantiate_ansatz(self.H, _ansatz)
+        hydra_config = _find_hydra_config(model_path)
+        if hydra_config is not None:
+            self.H, self.ansatz = _instantiate_problem_from_hydra_config(hydra_config)
+        else:
+            self.H, self.ansatz = _instantiate_default_he_problem()
 
         step, train_state = _load_checkpoint_without_h5py(Path(model_path))
         params = train_state.params
