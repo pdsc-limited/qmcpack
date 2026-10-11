@@ -120,22 +120,6 @@ ParticleSet makeIons(const SimulationCell& simulation_cell)
   return ions;
 }
 
-class UnsupportedAllParticleWF : public WaveFunctionComponent
-{
-public:
-  std::string getClassName() const override { return "UnsupportedAllParticleWF"; }
-  LogValue evaluateLog(const ParticleSet&, ParticleSet::ParticleGradient&, ParticleSet::ParticleLaplacian&) override
-  {
-    return LogValue(0);
-  }
-  void acceptMove(ParticleSet&, int, bool) override {}
-  void restore(int) override {}
-  PsiValue ratio(ParticleSet&, int) override { return PsiValue(1); }
-  void registerData(ParticleSet&, WFBufferType&) override {}
-  LogValue updateBuffer(ParticleSet&, WFBufferType&, bool) override { return LogValue(0); }
-  void copyFromBuffer(ParticleSet&, WFBufferType&) override {}
-  void evaluateDerivatives(ParticleSet&, const OptVariables&, Vector<ValueType>&, Vector<ValueType>&) override {}
-};
 } // namespace
 
 TEST_CASE("DeepQMCWF batched evaluateLog", "[wavefunction][deepqmc]")
@@ -302,22 +286,6 @@ TEST_CASE("all-particle TWF dispatch recovers rejected walkers only", "[wavefunc
   ParticleSet::mw_accept_rejectMoveAllParticles(p_list, {true, true});
   dispatcher.flex_accept_rejectMoveAllParticles(wf_list, p_list, {true, true});
   CHECK(bridge->call_count == calls_before_accept);
-}
-
-TEST_CASE("all-particle WFC capability and TWF dispatcher are gated", "[wavefunction][deepqmc]")
-{
-  const SimulationCell simulation_cell;
-  RuntimeOptions runtime_options;
-  ParticleSet elec = makeElectrons(simulation_cell, {{0.0, 0.0, 0.0}});
-  TrialWaveFunction twf(runtime_options, "unsupported");
-  twf.addComponent(std::make_unique<UnsupportedAllParticleWF>());
-  RefVectorWithLeader<TrialWaveFunction> wf_list(twf, {twf});
-  RefVectorWithLeader<ParticleSet> p_list(elec, {elec});
-  REQUIRE_THROWS_AS(TrialWaveFunction::mw_evaluateLogAllParticles(wf_list, p_list, {true}), std::runtime_error);
-  REQUIRE_THROWS_AS(TrialWaveFunction::mw_accept_rejectMoveAllParticles(wf_list, p_list, {false}), std::runtime_error);
-  TWFdispatcher dispatcher(false);
-  REQUIRE_THROWS_AS(dispatcher.flex_evaluateLogAllParticles(wf_list, p_list, {true}), std::runtime_error);
-  REQUIRE_THROWS_AS(dispatcher.flex_accept_rejectMoveAllParticles(wf_list, p_list, {true}), std::runtime_error);
 }
 
 TEST_CASE("DeepQMCWF batched PbyP methods", "[wavefunction][deepqmc]")

@@ -12,6 +12,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include "Utilities/for_testing/Catch2Approx.h"
 
+#include <algorithm>
+
 #include "OhmmsData/Libxml2Doc.h"
 #include "Particle/ParticleSet.h"
 #include "Particle/ParticleSetPool.h"
@@ -107,57 +109,77 @@ std::unique_ptr<TrialWaveFunction> setup_He_wavefunction(Communicate* c,
   return twf_ptr;
 }
 
-namespace
+TEST_CASE("TrialWaveFunction all-particle APIs use serial component fallback", "[wavefunction]")
 {
-class UnsupportedAllParticleWF : public WaveFunctionComponent
-{
-public:
-  std::string getClassName() const override { return "UnsupportedAllParticleWF"; }
-  LogValue evaluateLog(const ParticleSet&, ParticleSet::ParticleGradient&, ParticleSet::ParticleLaplacian&) override
-  {
-    return LogValue(0);
-  }
-  void acceptMove(ParticleSet&, int, bool) override {}
-  void restore(int) override {}
-  PsiValue ratio(ParticleSet&, int) override { return PsiValue(1); }
-  void registerData(ParticleSet&, WFBufferType&) override {}
-  LogValue updateBuffer(ParticleSet&, WFBufferType&, bool) override { return LogValue(0); }
-  void copyFromBuffer(ParticleSet&, WFBufferType&) override {}
-  void evaluateDerivatives(ParticleSet&, const OptVariables&, Vector<ValueType>&, Vector<ValueType>&) override {}
-};
-} // namespace
-
-TEST_CASE("TrialWaveFunction all-particle APIs require component support", "[wavefunction]")
-{
+  Communicate* c = OHMMS::Controller;
   const SimulationCell simulation_cell;
-  ParticleSet elec(simulation_cell);
-  elec.create({1});
-  elec.update();
-  RuntimeOptions runtime_options;
-  TrialWaveFunction twf(runtime_options);
-  twf.addComponent(std::make_unique<UnsupportedAllParticleWF>());
-  RefVectorWithLeader<TrialWaveFunction> wf_list(twf, {twf});
-  RefVectorWithLeader<ParticleSet> p_list(elec, {elec});
-  ParticleSet::ParticleGradient gradients(1);
-  ParticleSet::ParticleLaplacian laplacians(1);
-  RefVectorWithLeader<WaveFunctionComponent> wfc_list(*twf.getOrbitals()[0], {*twf.getOrbitals()[0]});
-  RefVector<ParticleSet::ParticleGradient> gradient_list;
-  gradient_list.push_back(gradients);
-  RefVector<ParticleSet::ParticleLaplacian> laplacian_list;
-  laplacian_list.push_back(laplacians);
+  auto ions_ptr  = std::make_unique<ParticleSet>(simulation_cell);
+  auto elec0_ptr = std::make_unique<ParticleSet>(simulation_cell);
+  auto &ions(*ions_ptr), elec0(*elec0_ptr);
+  ions.setName("ion0");
+  elec0.setName("e");
+  WaveFunctionFactory::PSetMap particle_set_map;
+  particle_set_map.emplace(ions_ptr->getName(), std::move(ions_ptr));
+  particle_set_map.emplace(elec0_ptr->getName(), std::move(elec0_ptr));
 
-  REQUIRE_THROWS_AS(twf.getOrbitals()[0]->mw_evaluateLogAllParticles(wfc_list, p_list, gradient_list, laplacian_list,
-                                                                     {true}),
-                    std::runtime_error);
-  REQUIRE_THROWS_AS(twf.getOrbitals()[0]->mw_accept_rejectMoveAllParticles(wfc_list, p_list, gradient_list,
-                                                                           laplacian_list, {false}),
-                    std::runtime_error);
-  REQUIRE_THROWS_AS(TrialWaveFunction::mw_evaluateLogAllParticles(wf_list, p_list, {true}), std::runtime_error);
-  REQUIRE_THROWS_AS(TrialWaveFunction::mw_accept_rejectMoveAllParticles(wf_list, p_list, {false}), std::runtime_error);
+  auto psi0_ptr = setup_He_wavefunction(c, elec0, ions, particle_set_map);
+  TrialWaveFunction& psi0(*psi0_ptr);
+  ions.update();
+  elec0.update();
+
+  ParticleSet elec1(elec0);
+  elec1.R[0][0] += 0.2;
+  elec1.update();
+  auto psi1_ptr = psi0.makeClone(elec1);
+  TrialWaveFunction& psi1(*psi1_ptr);
+
+  const auto initial_log1 = psi1.evaluateLog(elec1);
+  const ParticleSet::ParticleGradient initial_g1(elec1.G);
+  const ParticleSet::ParticleLaplacian initial_l1(elec1.L);
+
+  constexpr int num_walkers = 2;
+  MCCoords<CoordsType::POS> displacements(elec0.getTotalNum() * num_walkers);
+  displacements.positions = {{0.1, 0.0, 0.0}, {0.0, 0.1, 0.0}, {-0.1, 0.0, 0.0}, {0.0, -0.1, 0.0}};
+  ParticleSet proposed0(elec0);
+  for (int iat = 0; iat < elec0.getTotalNum(); ++iat)
+    proposed0.R[iat] += displacements.positions[num_walkers * iat];
+  proposed0.update();
+  auto proposed_psi0       = psi0.makeClone(proposed0);
+  const auto proposed_log0 = proposed_psi0->evaluateLog(proposed0);
+  const ParticleSet::ParticleGradient proposed_g0(proposed0.G);
+  const ParticleSet::ParticleLaplacian proposed_l0(proposed0.L);
+
+  RefVectorWithLeader<TrialWaveFunction> wf_list(psi0, {psi0, psi1});
+  RefVectorWithLeader<ParticleSet> p_list(elec0, {elec0, elec1});
+  ResourceCollection resources("serial_all_particle_resources");
+  elec0.createResource(resources);
+  ResourceCollectionTeamLock<ParticleSet> lock(resources, p_list);
+  std::vector<bool> valid(displacements.positions.size());
+  ParticleSet::mw_makeMoveAllParticles(p_list, displacements, valid);
+  REQUIRE(std::all_of(valid.begin(), valid.end(), [](bool is_valid) { return is_valid; }));
+  TrialWaveFunction::mw_evaluateLogAllParticles(wf_list, p_list, {true, false});
+
+  auto check_state = [](const TrialWaveFunction& psi, const ParticleSet& elec, const auto log, const auto& G,
+                        const auto& L) {
+    CHECK(psi.getLogPsi() == Approx(log));
+    for (int iat = 0; iat < elec.getTotalNum(); ++iat)
+    {
+      for (int idim = 0; idim < OHMMS_DIM; ++idim)
+        CHECK(elec.G[iat][idim] == ValueApprox(G[iat][idim]));
+      CHECK(elec.L[iat] == ValueApprox(L[iat]));
+    }
+  };
+  check_state(psi0, elec0, proposed_log0, proposed_g0, proposed_l0);
+  check_state(psi1, elec1, initial_log1, initial_g1, initial_l1);
+
+  ParticleSet::mw_accept_rejectMoveAllParticles(p_list, {true, false});
+  TrialWaveFunction::mw_accept_rejectMoveAllParticles(wf_list, p_list, {true, false});
+  check_state(psi0, elec0, proposed_log0, proposed_g0, proposed_l0);
+  check_state(psi1, elec1, initial_log1, initial_g1, initial_l1);
 
   TWFdispatcher dispatcher(/*use_batch=*/false);
-  REQUIRE_THROWS_AS(dispatcher.flex_evaluateLogAllParticles(wf_list, p_list, {true}), std::runtime_error);
-  REQUIRE_THROWS_AS(dispatcher.flex_accept_rejectMoveAllParticles(wf_list, p_list, {true}), std::runtime_error);
+  REQUIRE_THROWS_AS(dispatcher.flex_evaluateLogAllParticles(wf_list, p_list, {true, true}), std::runtime_error);
+  REQUIRE_THROWS_AS(dispatcher.flex_accept_rejectMoveAllParticles(wf_list, p_list, {true, true}), std::runtime_error);
 }
 
 TEST_CASE("TrialWaveFunction flex_evaluateParameterDerivatives", "[wavefunction]")
